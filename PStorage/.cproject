@@ -21,6 +21,8 @@
 								<option id="io.sloeber.compiler.cpp.sketch.option.incpath.2017480423" name="Include Paths (-I)" superClass="io.sloeber.compiler.cpp.sketch.option.incpath" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorageLib/core/core}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorageLib/core/variant}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorage/core/core}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorage/core/variant}&quot;"/>
 								</option>
 								<inputType id="io.sloeber.compiler.cpp.sketch.input.734312375" name="CPP source files" superClass="io.sloeber.compiler.cpp.sketch.input"/>
 							</tool>
@@ -28,6 +30,8 @@
 								<option id="io.sloeber.compiler.c.sketch.option.incpath.105674417" name="Include Paths (-I)" superClass="io.sloeber.compiler.c.sketch.option.incpath" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorageLib/core/core}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorageLib/core/variant}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorage/core/core}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorage/core/variant}&quot;"/>
 								</option>
 								<inputType id="io.sloeber.compiler.c.sketch.input.1243943815" name="C Source Files" superClass="io.sloeber.compiler.c.sketch.input"/>
 							</tool>
@@ -35,6 +39,8 @@
 								<option id="io.sloeber.compiler.asm.sketch.option.incpath.839750402" name="Include Paths (-I)" superClass="io.sloeber.compiler.asm.sketch.option.incpath" valueType="includePath">
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorageLib/core/core}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorageLib/core/variant}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorage/core/core}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/PStorage/core/variant}&quot;"/>
 								</option>
 								<inputType id="io.sloeber.compiler.S.sketch.input.2035435784" name="Assembly source files" superClass="io.sloeber.compiler.S.sketch.input"/>
 							</tool>
