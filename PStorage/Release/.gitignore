@@ -1,7 +1,2 @@
 /core/
-/makefile
-/objects.mk
-/sources.mk
 /src/
-/subdir.mk
-/test/

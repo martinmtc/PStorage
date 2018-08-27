@@ -7,6 +7,7 @@
 
 #include "PStorage.h"
 
+PStorage pStorage;
 
 #if(PSTORAGE_DEBUG_ENABLED)
 void _pStoragedebug(const char *format, ...) {
@@ -19,6 +20,7 @@ void _pStoragedebug(const char *format, ...) {
 }
 #endif
 
+
 PStorage::PStorage() {
 }
 
@@ -29,144 +31,143 @@ PStorage::~PStorage() {
 unsigned int PStorage::maxSize() {
 	FSInfo fsInfo;
 	SPIFFS.info(fsInfo);
-	return PSTORAGE_SPIFFS_ALLOCFACTOR/100 * fsInfo.totalBytes;
+	return fsInfo.totalBytes/100 * PSTORAGE_SPIFFS_ALLOCFACTOR;
+}
+
+#if(PSTORAGE_DEBUG_ENABLED)
+unsigned int spiffsSize() {
+	FSInfo fsInfo;
+	SPIFFS.info(fsInfo);
+	return fsInfo.totalBytes;
+}
+#endif
+
+void printPStorageStats() {
+	PSTORAGE_DEBUG("Statistics");
+	PSTORAGE_DEBUG("---------------------------------------------------------------------------------------------------------------");
+	PSTORAGE_DEBUG("SPIFFS size:\t\t\t\t\t\t\t\t\t\t\t\t\t\t %u kBytes", spiffsSize() / 1024);
+	PSTORAGE_DEBUG("SPIFFS Allocation Factor:\t\t\t\t\t\t\t\t %u %", PSTORAGE_SPIFFS_ALLOCFACTOR);
+	PSTORAGE_DEBUG("Max size of storage files combined:\t\t\t %u kBytes", pStorage.maxSize() / 1024);
+	PSTORAGE_DEBUG("Max value size of entry:\t\t\t\t\t\t\t\t %u Bytes", PSTORAGE_ENTRY_VALUE_MAXSIZE);
+	PSTORAGE_DEBUG("Max size of entry name:\t\t\t\t\t\t\t\t %u Bytes", PSTORAGE_ENTRY_NAME_MAXSIZE);
+	PSTORAGE_DEBUG("Size of Index Entry (incl. name)\t\t\t\t\t %u Bytes", sizeof(PStorageIndexEntry));
+	PSTORAGE_DEBUG("Upper bound estimation of entries:\t\t\t %u", pStorage.maxSize() / (sizeof(PStorageIndexEntry) + 1));
+	PSTORAGE_DEBUG("Lower bound estimation of entries:\t\t\t %u", pStorage.maxSize() / PSTORAGE_ENTRY_MAXSIZE);
+	PSTORAGE_DEBUG("---------------------------------------------------------------------------------------------------------------");
 }
 
 
-boolean PStorage::begin() {
-	PSTORAGE_DEBUG("init(): Called");
-	PSTORAGE_DEBUG("PStorage() initialize");
-	PSTORAGE_DEBUG("Statistics");
-	PSTORAGE_DEBUG("---------------------------------------------------------------------------------------------------------------");
-	PSTORAGE_DEBUG("SPIFFS size:                        %u kBytes", _mySPIFFS.totalSize() / 1024);
-	PSTORAGE_DEBUG("SPIFFS Allocation Factor:           %u %", PSTORAGE_SPIFFS_ALLOCFACTOR);
-	PSTORAGE_DEBUG("Max size of storage files combined: %u", maxSize());
-	PSTORAGE_DEBUG("Max value size of entry:            %u bytes", PSTORAGE_ENTRY_MAXSIZE);
-	PSTORAGE_DEBUG("Max size of entry name:             %u bytes", PSTORAGE_ENTRY_NAME_MAXSIZE);
-	PSTORAGE_DEBUG("Upper bound estimation of entries:  %u", maxSize() / (sizeof(PStorageIndexEntry) + 1));
-	PSTORAGE_DEBUG("---------------------------------------------------------------------------------------------------------------");
-
-	// first we determine if reset was Deep Sleep
-	if (ESP.getResetReason().equals("Deep-Sleep Wake")) {
-		// we have to restore the persistent variables
-		if (!_open()) {
-			PSTORAGE_DEBUG("Could not open Persistent Storage, cannot continue");
-			return false;
-		}
-		else {
-			return true;
-		}
-	}
+boolean PStorage::create() {
+	printPStorageStats();
 	PSTORAGE_DEBUG("init(): Try to create index file %s", _getIndexFileName());
-	_indexFile = SPIFFS.open(_getIndexFileName(), "w+");  // open for reading and writing, stream is positioned at the beginning
-	if (!_indexFile) {
+	File indexFile = SPIFFS.open(_getIndexFileName(), "w+");  // open for reading and writing, stream is positioned at the beginning
+	if (!indexFile) {
 		PSTORAGE_DEBUG("init(): Could not init %s", _getIndexFileName());
 		return false;
 	}
 	PSTORAGE_DEBUG("init(): Try to create value file %s", _getValueFileName());
-	_valueFile = SPIFFS.open(_getValueFileName(), "w+");
-	if (!_valueFile) {
+	File valueFile = SPIFFS.open(_getValueFileName(), "w+");
+	if (!valueFile) {
 		PSTORAGE_DEBUG("init(): Could not init %s", _getValueFileName());
+		// house keeping
+		indexFile.close();
+		SPIFFS.remove(_getIndexFileName());
+
 		return false;
 	}
-	PSTORAGE_DEBUG("init(): Successfully initialized index file \"%s\" and value file \"%s\"", _indexFile.name(), _valueFile.name());
-	PSTORAGE_DEBUG("init(): File Size of index file %u kBytes, value file %u kBytes", _indexFile.size()/1024, _valueFile.size()/1024);
+	// now we initialize and write the control structure
+	_pcp.maxEntries = PSTORAGE_MAX_ENTRIES;
+	_pcp.valueFileMaxSize = PSTORAGE_VALUEFILE_MAXSIZE;
+	_pcp.entryNameMaxSize = PSTORAGE_ENTRY_NAME_MAXSIZE;
+	_pcp.actualEntries = 0;
+	_pcp.actualValueFileSize = 0;
+	byte buf[sizeof(PStorageCtrlParams)];
+	_ctrlParamsSerialize(_pcp, buf);
+	unsigned int bytesWritten = indexFile.write(buf, sizeof(buf));
+	if (bytesWritten != sizeof(buf)) {
+		PSTORAGE_DEBUG("init(): Could only write %u bytes instead of %u bytes from Index File", bytesWritten, sizeof(buf));
+		// house keeping
+		indexFile.close();
+		valueFile.close();
+		SPIFFS.remove(_getIndexFileName());
+		SPIFFS.remove(_getValueFileName());
+		return false;
+	}
+	indexFile.flush();  // ensure writing
+	// and immediately close both files
+	indexFile.close();
+	valueFile.close();
+	PSTORAGE_DEBUG("init(): Successfully initialized index file \"%s\" and value file \"%s\"", _getIndexFileName(), _getValueFileName());
 	return true;
 }
 
-boolean PStorage::end() {
-	_close();
-	return true;
+void PStorage::_serializeUINT(const unsigned int v, byte buf[], int *index) {
+	for (int i = 0; i < sizeof(unsigned int); i++) {
+		byte b = v % 256;
+		v = v >> 8;
+		buf[(*index)++] = b;
+	}
 }
 
-boolean PStorage::_open() {
-	PSTORAGE_DEBUG("_open(); Called");
-	PSTORAGE_DEBUG("_open(): Try to open index file %s", _getIndexFileName());
-	_indexFile = SPIFFS.open(_getIndexFileName(), "r+"); // open for reading and writing, stream is positioned at the beginning
-	if (!_indexFile) {
-		PSTORAGE_DEBUG("_openp(): Could not open %s", _getIndexFileName());
-		return false;
+unsigned int PStorage::_deserializeUNIT(const byte buf[], int *index) {
+	unsigned int result = 0;
+	byte b;
+	for (int i = 0; i < sizeof(unsigned int); i++) {
+		b = buf[(*index)++];
+		result = result + (b << (8 * i));
 	}
-	PSTORAGE_DEBUG("_open(): Try to open value file %s", _getValueFileName());
-	_valueFile = SPIFFS.open(_getValueFileName(), "r+");
-	if (!_valueFile) {
-		PSTORAGE_DEBUG("_openp(): Could not open %s", _getValueFileName());
-		return false;
-	}
-	PSTORAGE_DEBUG("_open(): Successfully opened index file \"%s\" and value file \"%s\"", _getIndexFileName(), _getValueFileName());
-	PSTORAGE_DEBUG("open(): File Size of index file %u kBytes, value file %u kBytes", _indexFile.size()/1024, _valueFile.size()/1024);
-	return true;
+	return result;
 }
 
+void PStorage::_ctrlParamsSerialize(const PStorageCtrlParams pcp, byte buf[]) {
+	PSTORAGE_DEBUG("_ctrlParamsSerialize(): Called");
+	int index = 0;
+	_serializeUINT(pcp.maxEntries, buf, &index);
+	_serializeUINT(pcp.valueFileMaxSize, buf, &index);
+	_serializeUINT(pcp.entryNameMaxSize, buf, &index);
+	_serializeUINT(pcp.actualEntries, buf, &index);
+	_serializeUINT(pcp.actualValueFileSize, buf, &index);
+}
 
-void PStorage::_close() {
-	PSTORAGE_DEBUG("_close(): Called");
-	_indexFile.close();
-	_valueFile.close();
+void PStorage::_ctrlParamsDeserialize(const byte buf[], PStorageCtrlParams *pcp) {
+	int index = 0;
+	pcp->maxEntries = _deserializeUNIT(buf, &index);
+	pcp->valueFileMaxSize = _deserializeUNIT(buf, &index);
+	pcp->entryNameMaxSize = _deserializeUNIT(buf, &index);
+	pcp->actualEntries = _deserializeUNIT(buf, &index);
+	pcp->actualValueFileSize = _deserializeUNIT(buf, &index);
+
 }
 
 void PStorage::_indexEntrySerialize(const PStorageIndexEntry indexEntry, byte buf[]) {   // Serialize _pstorageIndexEntry into buf[sizeof(_pStorageIndexEntry)]
-	unsigned int uiv;
-	unsigned long ulv;
 	PSTORAGE_DEBUG("_indexEntrySerialize(): Called");
 	int index = 0;
 	for (unsigned int i = 0; i < sizeof(indexEntry.name); i++) {
 		buf[index++] = (byte) indexEntry.name[i];
 	}
-	uiv = indexEntry.maxLengthValue;
-	for (unsigned int i = 0; i < sizeof(indexEntry.maxLengthValue); i++) {
-		byte b = uiv % 256;
-		uiv = uiv >> 8;
-		buf[index++] = b;
-	}
-	uiv = indexEntry.actualLengthValue;
-	for (unsigned int i = 0; i < sizeof(indexEntry.actualLengthValue); i++) {
-		byte b = uiv % 256;
-		uiv = uiv >> 8;
-		buf[index++] = b;
-	}
-	ulv = indexEntry.valuePosition;
-	for (unsigned int i = 0; i < sizeof(indexEntry.valuePosition); i++) {
-		byte b = ulv % 256;
-		ulv = ulv >> 8;
-		buf[index++] = b;
-	}
+	_serializeUINT(indexEntry.maxValueSize, buf, &index);
+	_serializeUINT(indexEntry.actualValueSize, buf, &index);
+	_serializeUINT(indexEntry.valuePosition, buf, &index);
+	buf[index++] = indexEntry.type;  // finally the type
 	PSTORAGE_DEBUG("_indexEntrySerialize(): Return");
 }
 
 void PStorage::_indexEntryDeserialize(const byte buf[], PStorageIndexEntry *indexEntry) {  // De-serialize _pStorageIndexEntry from _pStorageIndexEntryBuf[sizeof(_pStorageIndexEntry)]
-	unsigned int uiv;
-	unsigned long ulv;
-	byte b;
 	PSTORAGE_DEBUG("_indexEntryDeserialize(): Called");
 	int index = 0;
 	for (unsigned int i = 0; i < sizeof(indexEntry->name); i++) {
 		indexEntry->name[i] = (char) buf[index++];
 	}
-	uiv = 0;
-	for (unsigned int i = 0; i < sizeof(indexEntry->maxLengthValue); i++) {
-		b = buf[index++];
-		uiv = uiv + (b << (8 * i));
-	}
-	indexEntry->maxLengthValue = uiv;
-	uiv = 0;
-	for (unsigned int i = 0; i < sizeof(indexEntry->actualLengthValue); i++) {
-		b = buf[index++];
-		uiv = uiv + (b << (8 * i));
-	}
-	indexEntry->actualLengthValue = uiv;
-	ulv = 0;
-	for (unsigned int i = 0; i < sizeof(indexEntry->valuePosition); i++) {
-		b = buf[index++];
-		ulv = ulv + (b << (8 * i));
-	}
-	indexEntry->valuePosition = ulv;
+	indexEntry->maxValueSize = _deserializeUNIT(buf, &index);
+	indexEntry->actualValueSize = _deserializeUNIT(buf, &index);
+	indexEntry->valuePosition = _deserializeUNIT(buf, &index);
+	indexEntry->type = buf[index++];
 	PSTORAGE_DEBUG("_indexEntryDeserialize(): Return");
 }
 
 boolean PStorage::_readIndexEntry(File indexFile, PStorageIndexEntry *indexEntry, const unsigned int position) {  // reads an index entry from the current file position
-	byte indexEntryBuf[sizeof(PStorageIndexEntry)];
 	PSTORAGE_DEBUG("_readIndexEntry(): Called with position %u", position);
+	byte indexEntryBuf[sizeof(PStorageIndexEntry)];
 	if (!indexFile.seek(position, SeekSet)) {
 		PSTORAGE_DEBUG("_readIndexEntry(): Could not set file position to %u", position);
 		return false;
@@ -181,7 +182,7 @@ boolean PStorage::_readIndexEntry(File indexFile, PStorageIndexEntry *indexEntry
 	return true;
 }
 
-boolean PStorage::_writeIndexEntry(File indexFile, const PStorageIndexEntry indexEntry, const unsigned int position) {  // writes an index entry at the current position
+boolean PStorage::_writeIndexEntry(File indexFile, const PStorageIndexEntry indexEntry, const unsigned int position) {  // writes an index entry
 	byte indexEntryBuf[sizeof(PStorageIndexEntry)];
 	PSTORAGE_DEBUG("_writeIndexEntry(): Called with position %u", position);
 	if (!indexFile.seek(position, SeekSet)) {
@@ -191,7 +192,7 @@ boolean PStorage::_writeIndexEntry(File indexFile, const PStorageIndexEntry inde
 	_indexEntrySerialize(indexEntry, indexEntryBuf); // _pStorageIndexEntry -----> _pStorageIndexEntryBuf[sizeof(_pStorageIndexEntry)]
 	unsigned int bytesWritten = indexFile.write(indexEntryBuf, sizeof(indexEntryBuf));
 	if (bytesWritten != sizeof(indexEntryBuf)) {
-		PSTORAGE_DEBUG("_writeIndexEntry(): Could only write %u bytes instead of %u bytes from Index File", bytesWritten, sizeof(PStorageIndexEntry));
+		PSTORAGE_DEBUG("_writeIndexEntry(): Could only write %u bytes instead of %u bytes from Index File", bytesWritten, sizeof(indexEntryBuf));
 		return false;
 	}
 	indexFile.flush();  // ensure writing
@@ -199,15 +200,16 @@ boolean PStorage::_writeIndexEntry(File indexFile, const PStorageIndexEntry inde
 	return true;
 }
 
-boolean PStorage::_searchIndexEntry(const char *name, File indexFile, unsigned int *position) { // return true if success, file pointer points to the index entry if found
+boolean PStorage::_searchIndexEntry(const byte type, const char *name, File indexFile, unsigned int *position) { // return true if success, file pointer points to the index entry if found
 	PStorageIndexEntry indexEntry;
-	*position = 0;
+	*position = sizeof(PStorageCtrlParams); // position after the control structure
 	indexFile.seek(*position,SeekSet);
-	PSTORAGE_DEBUG("_searchIndexEntry(): Called with name \"%s\"", name);
+	PSTORAGE_DEBUG("_searchIndexEntry(): Called with type \"u\" abd name \"%s\"", type, name);
 	// TODO: Improve linear search
 	while (indexFile.available()) {
 		_readIndexEntry(indexFile, &indexEntry, *position);
-		if (strcasecmp(indexEntry.name, name) == 0) { // found
+		if ( (strcasecmp(indexEntry.name, name) == 0) &&
+				(indexEntry.type == type) ) { // found
 			PSTORAGE_DEBUG("_searchIndexEntry(): Found \"%s\" at position %u", name, *position);
 			return true;
 		}
@@ -216,6 +218,10 @@ boolean PStorage::_searchIndexEntry(const char *name, File indexFile, unsigned i
 	PSTORAGE_DEBUG("_searchIndexEntry(): Not found \"%s\"", name);
 	return false;
 }
+
+
+!!!!!! hier müssen jetzt die Dateien neu geöffnet werden
+
 
 boolean PStorage::_createEntry(const char *name, File indexFile, File valueFile, unsigned int maxLengthValue) {  // create an entry of maxLength bytes with name 'name'
 	PStorageIndexEntry indexEntry;
@@ -330,9 +336,40 @@ const char* PStorage::_getValueFileName() {
 	return "/mem/db.dat";
 }
 
+boolean PStorage::_getPStorageFiles(File *indexFile, File *valueFile) {
+	byte buf[sizeof(PStorageCtrlParams)];
+	PSTORAGE_DEBUG("_getPStorageFiles(): Called");
+	*indexFile = SPIFFS.open(_getIndexFileName(), "r+"); // open for reading and writing, stream is positioned at the beginning
+	if (!(*indexFile)) {
+		PSTORAGE_DEBUG("_getPStorageFiles(): Could not open %s", _getIndexFileName());
+		return false;
+	}
+	// update control structure
+	unsigned int bytesRead = indexFile->readBytes((char*) buf, sizeof(buf));
+	if (bytesRead != sizeof(buf)) {
+		PSTORAGE_DEBUG("_getPStorageFiles(): Could only read %u bytes instead of %u bytes from Index File", bytesRead, sizeof(buf));
+		return false;
+	}
+	_ctrlParamsDeserialize(buf, &_pcp);
+	// finally we have to check if PSTORAGE_ENTRY_NAME_MAXSIZE still fits. Otherwise no buffers will fit and we have to re-init
+	if (_pcp.entryNameMaxSize != PSTORAGE_ENTRY_NAME_MAXSIZE) {
+		PSTORAGE_DEBUG("_getPStorageFiles(): Entry name max size of %u in index file does not match actual configuration %u",
+				_pcp.entryNameMaxSize, PSTORAGE_ENTRY_NAME_MAXSIZE);
+		return false;
+	}
+	*valueFile = SPIFFS.open(_getValueFileName(), "r+"); // open for reading and writing, stream is positioned at the beginning
+	if (!(*valueFile)) {
+		PSTORAGE_DEBUG("_getPStorageFiles(): Could not open %s", _getValueFileName());
+		return false;
+	}
+	return true;
+}
+
+
 /*
    Convenience Methods
  */
+
 
 #define INT_CHARS_DEC (sizeof(int) * 3 + 1 + 1) // string holding int and uint in dec. repr., 2 extra bytes for sign and '\0' string terminator
 #define LONG_CHARS_DEC (sizeof(long) * 3 + 1 + 1) // string holding long and ulong in dec. representation
@@ -370,6 +407,12 @@ boolean PStorage::readString(const char *name, char *str, unsigned int strSize) 
 	return readByteArray(name, (byte*) str, strSize, &length); // length should be strlen(...) + 1 but not of interest, here
 }
 
+boolean PStorage::map(const char* name, int value) {
+}
+
+boolean PStorage::get(const char* name, int* value) {
+}
+
 boolean PStorage::createInt(const char *name) {
 	PSTORAGE_DEBUG("createInt(): Called with name \"%s\"", name);
 	return createString(name, INT_CHARS_DEC);
@@ -388,6 +431,12 @@ boolean PStorage::readInt(const char *name, int *result) {
 	if (!readString(name, str, INT_CHARS_DEC)) return false;
 	*result = strtol(str, NULL, 10);
 	return true;
+}
+
+boolean PStorage::map(const char* name, unsigned int value) {
+}
+
+boolean PStorage::get(const char* name, unsigned int* value) {
 }
 
 boolean PStorage::createUnsignedInt(const char *name) {
@@ -410,6 +459,12 @@ boolean PStorage::readUnsignedInt(const char *name, unsigned int *result ) {
 	return true;
 }
 
+boolean PStorage::map(const char* name, long value) {
+}
+
+boolean PStorage::get(const char* name, long * value) {
+}
+
 boolean PStorage::createLong(const char *name) {
 	PSTORAGE_DEBUG("createLong(): Called with name \"%s\"", name);
 	return createString(name, LONG_CHARS_DEC);
@@ -430,6 +485,12 @@ boolean PStorage::readLong(const char *name, long *result) {
 	return true;
 }
 
+boolean PStorage::map(const char* name, unsigned long value) {
+}
+
+boolean PStorage::get(const char* name, unsigned long * value) {
+}
+
 boolean PStorage::createUnsignedLong(const char *name) {
 	PSTORAGE_DEBUG("createUnsignedLong(): Called with name \"%s\"", name);
 	return createString(name, LONG_CHARS_DEC);
@@ -448,6 +509,12 @@ boolean PStorage::readUnsignedLong(const char *name, unsigned long *result) {
 	if (!readString(name, str, LONG_CHARS_DEC)) return false;
 	*result = strtoul(str, NULL, 10);
 	return true;
+}
+
+boolean PStorage::map(const char* name, float value) {
+}
+
+boolean PStorage::get(const char* name, float* value) {
 }
 
 boolean PStorage::createFloat(const char *name) {

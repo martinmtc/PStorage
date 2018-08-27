@@ -31,4 +31,21 @@
 		<nature>io.sloeber.arduinonature</nature>
 		<nature>org.eclipse.linuxtools.tmf.project.nature</nature>
 	</natures>
+	<linkedResources>
+		<link>
+			<name>src</name>
+			<type>2</type>
+			<locationURI>PROJECT_LOC/src</locationURI>
+		</link>
+		<link>
+			<name>core/core</name>
+			<type>2</type>
+			<locationURI>ECLIPSE_HOME/arduinoPlugin/packages/esp8266/hardware/esp8266/2.4.1/cores/esp8266</locationURI>
+		</link>
+		<link>
+			<name>core/variant</name>
+			<type>2</type>
+			<locationURI>ECLIPSE_HOME/arduinoPlugin/packages/esp8266/hardware/esp8266/2.4.1/variants/d1_mini</locationURI>
+		</link>
+	</linkedResources>
 </projectDescription>

@@ -1,14 +1,22 @@
 #define PSTORAGE_TEST_ENABLED 		true
 
 #include "Arduino.h"
-//The setup function is called once at startup of the sketch
+#include "PStorageTest.h"
+
+
 void setup()
 {
-// Add your initialization code here
+	Serial.begin(115200);
+	delay(1000);
+	SPIFFS.begin();
+	pStorage.init();
+	pStorageTest();
+	pStorage.end();
 }
 
-// The loop function is called in an endless loop
+
+
 void loop()
 {
-//Add your repeated code here
+	//Add your repeated code here
 }

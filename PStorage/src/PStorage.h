@@ -19,10 +19,14 @@
 #include <Arduino.h>
 #include <FS.h>
 
-#define PSTORAGE_DEBUG_ENABLED 		false
-#define PSTORAGE_SPIFFS_ALLOCFACTOR 50					// % percentage PStorage shall use of SPIFFS
-#define PSTORAGE_ENTRY_VALUE_MAXSIZE		512			// bytes per entry
-#define PSTORAGE_ENTRY_NAME_MAXSIZE	20					// bytes per index entry name
+#define PSTORAGE_DEBUG_ENABLED 			true
+
+#define PSTORAGE_MAX_ENTRIES			40 			// max number of entries
+#define PSTORAGE_VALUEFILE_MAXSIZE		(40*1024)	// byte being consumed by the value file. Should be sufficient for
+													// MAX_ENTRIES
+
+#define PSTORAGE_ENTRY_NAME_MAXSIZE		20			// Max size of an entry name. A change may invalidate all existing PStorages
+													// be careful (!!!)
 
 #if(PSTORAGE_DEBUG_ENABLED)
 #define PSTORAGE_DEBUG(...) _pStoragedebug(__VA_ARGS__)
@@ -30,15 +34,33 @@
 #define PSTORAGE_DEBUG(...)
 #endif
 
+#define P_INT 0
+#define P_UINT 1
+#define P_LONG 2
+#define P_ULONG 3
+#define P_FLOAT 4
+#define P_ARRAY 5
+#define P_STRING 6
 
 struct PStorageIndexEntry {
-  char name[PSTORAGE_ENTRY_NAME_MAXSIZE  + 1];  // one more for the \o
-  unsigned int maxLengthValue;  // determines the bytes being reserved
-  unsigned int actualLengthValue;
-  unsigned int valuePosition; // position index into value dat file
+	char name[PSTORAGE_ENTRY_NAME_MAXSIZE  + 1];  // one more for the \0
+	unsigned int maxValueSize;  // determines the bytes being reserved
+	unsigned int actualValueSize;
+	unsigned int valuePosition; // position index into value .dat-file
+	byte type;
 };
 
-#define PSTORAGE_ENTRY_MAXSIZE (PSTORAGE_ENTRY_VALUE_MAXSIZE + sizeof(PStorageIndexEntry))
+/*
+ * PStorageCtrlParams are written at the beginning of the index file and ensure proper alignment with PStorage
+ * creation (!) parameter (in case they are changed throughout compilations)
+ */
+struct PStorageCtrlParams {
+	unsigned int maxEntries;
+	unsigned int valueFileMaxSize;  // the max SPIFF consumption of the value file
+	unsigned int entryNameMaxSize; // used to check consistence with current
+	unsigned int actualEntries;
+	unsigned int actualValueFileSize;
+};
 
 void _pStoragedebug(const char *format, ...);
 
@@ -47,8 +69,22 @@ public:
 	PStorage();
 	virtual ~PStorage();
 
-	boolean begin();
+	boolean create();
+	boolean resume();
 	boolean end();
+
+	boolean map(const char *name, int value);
+	boolean map(const char *name, unsigned int value);
+	boolean map(const char *name, long value);
+	boolean map(const char *name, unsigned long value);
+	boolean map(const char *name, float value);
+
+	boolean get(const char *name, int *value);
+	boolean get(const char *name, unsigned int *value);
+	boolean get(const char *name, long *value);
+	boolean get(const char *name, unsigned long *value);
+	boolean get(const char *name, float *value);
+
 
 	boolean createByteArray(const char *name, unsigned int maxSize);
 	boolean writeByteArray(const char *name, byte b[], unsigned int bSize);
@@ -58,35 +94,20 @@ public:
 	boolean writeString(const char *name, const char *str);
 	boolean readString(const char *name, char *str, unsigned int strSize);
 
-	boolean createInt(const char *name);
-	boolean writeInt(const char *name, int value);
-	boolean readInt(const char *name, int *result);
-
-	boolean createUnsignedInt(const char *name);
-	boolean writeUnsignedInt(const char *name, unsigned int value);
-	boolean readUnsignedInt(const char *name, unsigned int *result );
-
-	boolean createLong(const char *name);
-	boolean writeLong(const char *name, long value);
-	boolean readLong(const char *name, long *result);
-
-	boolean createUnsignedLong(const char *name);
-	boolean writeUnsignedLong(const char *name, unsigned long value);
-	boolean readUnsignedLong(const char *name, unsigned long *result);
-
-	boolean createFloat(const char *name);
-	boolean writeFloat(const char *name, float value);
-	boolean readFloat(const char *name, float *result);
-
 	unsigned int maxSize();
 
 private:
+	void _serializeUINT(const unsigned int v, byte buf[], int *index);
+	unsigned int _deserializeUNIT(const byte buf[], int *index);
+
+	void PStorage::_ctrlParamsSerialize(const PStorageCtrlParams pcp, byte buf[]);
+	void PStorage::_ctrlParamsDeserialize(const byte buf[], PStorageCtrlParams *pcp);
 	void _indexEntrySerialize(const PStorageIndexEntry indexEntry, byte buf[]);
 	void _indexEntryDeserialize(const byte buf[], PStorageIndexEntry *indexEntry);
 
 	boolean _readIndexEntry(File indexFile, PStorageIndexEntry *indexEntry, const unsigned int position);
 	boolean _writeIndexEntry(File indexFile, const PStorageIndexEntry indexEntry, const unsigned int position);
-	boolean _searchIndexEntry(const char *name, File indexFile, unsigned int *position);
+	boolean _searchIndexEntry(const byte type, const char *name, File indexFile, unsigned int *position);
 
 	boolean _createEntry(const char *name, File indexFile, File valueFile, unsigned int maxLengthValue);
 	boolean _writeEntry(const char *name, byte* writeBuf, unsigned int length, File indexFile, File valueFile);
@@ -94,12 +115,11 @@ private:
 
 	const char* _getIndexFileName();
 	const char* _getValueFileName();
+	boolean PStorage::_getPStorageFiles(File *indexFile, File *valueFile);
 
-	boolean _open();
-	void _close();
-
-	File _indexFile, _valueFile;
+	PStorageCtrlParams _pcp;
 };
 
+extern PStorage pStorage;
 
 #endif /* PSTORAGE_H_ */
