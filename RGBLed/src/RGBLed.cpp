@@ -1,5 +1,5 @@
 /*
- * RGBLed.cpp
+ * RGBLed.cpp lkewqlkgjwelgjdlkgkj
  *
  *  Created on: 04.08.2018
  *      Author: Dr. Martin Schaaf
@@ -21,8 +21,8 @@ void RGBLed::analogWrite(byte pin, byte dutyCycle) {
 }
 #endif
 
-RGBLed::RGBLed(byte pinRed, byte pinGreen, byte pinBlue) {
-	initRGB_LED(pinRed, pinGreen, pinBlue);
+RGBLed::RGBLed(byte pinRed, byte pinGreen, byte pinBlue, boolean inverted) {
+	_initRGB_LED(pinRed, pinGreen, pinBlue, inverted);
 	pinMode(pin_RED, OUTPUT);
 	pinMode(pin_GREEN, OUTPUT);
 	pinMode(pin_BLUE, OUTPUT);
@@ -42,30 +42,41 @@ RGBLed::RGBLed(byte pinRed, byte pinGreen, byte pinBlue) {
 RGBLed::~RGBLed() {
 }
 
-void RGBLed::setRGB(byte red, byte green, byte blue) {
-	pwm_RED = red; pwm_GREEN = green; pwm_BLUE = blue;
-	convertPWM_2_HSV(&h, &s, &v, pwm_RED, pwm_GREEN, pwm_BLUE);
-	analogWrite(pin_RED, pwm_RED);
-	analogWrite(pin_GREEN, pwm_GREEN);
-	analogWrite(pin_BLUE, pwm_BLUE);
+int RGBLed::getHue() {
+	return h;
+}
+
+float RGBLed::getSat() {
+	return s;
+}
+
+float RGBLed::getValue() {
+	return v;
+}
+int RGBLed::getRed() {
+	return this->pwm_RED;
+}
+
+int RGBLed::getGreen() {
+	return this->pwm_GREEN;
+}
+
+int RGBLed::getBlue() {
+	return this->pwm_BLUE;
+}
+
+void RGBLed::setRGB(int red, int green, int blue) {
+	this->pwm_RED = red % (PWMRANGE + 1);
+	this->pwm_GREEN = green % (PWMRANGE + 1);
+	this->pwm_BLUE = blue % (PWMRANGE + 1);
+	_convertPWM_2_HSV(&h, &s, &v, pwm_RED, pwm_GREEN, pwm_BLUE);
+	_enableRGB();
 }
 
 void RGBLed::setHSV(int h, float s, float v) {
 	this->h = h; this->s = s; this->v = v;
-	convertHSV_2_PWM (this->h, this->s, this->v, &(this->pwm_RED), &(this->pwm_GREEN), &(this->pwm_BLUE));
-	analogWrite(pin_RED, pwm_RED);
-	analogWrite(pin_GREEN, pwm_GREEN);
-	analogWrite(pin_BLUE, pwm_BLUE);
-}
-
-void RGBLed::initRGB_LED(byte pinRed, byte pinGreen, byte pinBlue) {
-	this->pin_RED = pinRed;
-	this->pin_GREEN = pinGreen;
-	this->pin_BLUE = pinBlue;
-	h = 0; s = 1.0; v = 1.0;
-	convertHSV_2_PWM(h, s, v, &pwm_RED, &pwm_GREEN, &pwm_BLUE);
-	cycle = true;
-	cycleDelay = 30;
+	_convertHSV_2_PWM (this->h, this->s, this->v, &(this->pwm_RED), &(this->pwm_GREEN), &(this->pwm_BLUE));
+	_enableRGB();
 }
 
 String RGBLed::print () {
@@ -76,24 +87,42 @@ String RGBLed::print () {
 	ret += "<R, G, B> = ";
 	ret += "<";
 	ret += (String(pwm_RED) + ", " + String(pwm_GREEN) + ", " + String(pwm_BLUE) + ">\n");
+#ifdef _ESP32_HAL_LEDC_H_
 	ret += "Channel <R, G, B> = ";
 	ret += "<";
 	ret += (String(channelRed) + ", " + String(channelGreen) + ", " + String(channelBlue) + ">\n");
+#endif
 	return ret;
 }
 
-void RGBLed::convertPWM_2_HSV (int *h, float *s, float *v, byte r, byte g, byte b) {
-	convertRGB_2_HSV(h, s, v, float(r) / 255, float(g) / 255, float(b) / 255);
+void RGBLed::_initRGB_LED(byte pinRed, byte pinGreen, byte pinBlue, boolean inverted) {
+	this->pin_RED = pinRed;
+	this->pin_GREEN = pinGreen;
+	this->pin_BLUE = pinBlue;
+	this->inverted = inverted;
+	h = 0; s = 0.0; v = 0.0;
+	_convertHSV_2_PWM(h, s, v, &pwm_RED, &pwm_GREEN, &pwm_BLUE);
+	_enableRGB();
+}
+
+void RGBLed::_enableRGB() {
+	analogWrite(pin_RED, this->inverted? PWMRANGE - pwm_RED : pwm_RED);
+	analogWrite(pin_GREEN, this->inverted? PWMRANGE - pwm_GREEN : pwm_GREEN);
+	analogWrite(pin_BLUE, this->inverted? PWMRANGE - pwm_BLUE : pwm_BLUE);
+}
+
+void RGBLed::_convertPWM_2_HSV (int *h, float *s, float *v, int r, int g, int b) {
+	_convertRGB_2_HSV(h, s, v, float(r) / PWMRANGE, float(g) / PWMRANGE, float(b) / PWMRANGE);
 }
 
 
-void RGBLed::convertHSV_2_PWM (int h, float s, float v, byte *r, byte *g, byte *b) {
+void RGBLed::_convertHSV_2_PWM (int h, float s, float v, int *r, int *g, int *b) {
 	float fr, fg, fb;
-	convertHSV_2_RGB(h, s, v, &fr, &fg, &fb);
-	*r = byte(fr * 255); *g = byte(fg * 255); *b = byte(fb * 255);
+	_convertHSV_2_RGB(h, s, v, &fr, &fg, &fb);
+	*r = int(fr * PWMRANGE); *g = int(fg * PWMRANGE); *b = int(fb * PWMRANGE);
 }
 
-void RGBLed::convertRGB_2_HSV (int *h, float *s, float *v, float r, float g, float b) {
+void RGBLed::_convertRGB_2_HSV (int *h, float *s, float *v, float r, float g, float b) {
 	float max, min;
 	if (r <= g) {
 		min = r; max = g;
@@ -133,7 +162,7 @@ void RGBLed::convertRGB_2_HSV (int *h, float *s, float *v, float r, float g, flo
    S: 0 ... 1
    V: 0 ... 1
  */
-void RGBLed::convertHSV_2_RGB (int h, float s, float v, float *r, float *g, float *b) {
+void RGBLed::_convertHSV_2_RGB (int h, float s, float v, float *r, float *g, float *b) {
 	int hi;
 	float f, p, q, t;
 
@@ -152,14 +181,3 @@ void RGBLed::convertHSV_2_RGB (int h, float s, float v, float *r, float *g, floa
 	}
 }
 
-int RGBLed::getHue() {
-	return h;
-}
-
-float RGBLed::getSat() {
-	return s;
-}
-
-float RGBLed::getValue() {
-	return v;
-}
